@@ -2,7 +2,7 @@ import tensorflow as tf
 from pennylane import numpy as np
 import matplotlib.pyplot as plt
 
-def get_dataset(digits=[3, 5], n_px=8, train_size=800, test_size=200):
+def get_dataset(digits=[3, 5], n_px=8, train_size=1000, test_size=200):
     (x_train, y_train), (x_test, y_test) = tf.keras.datasets.mnist.load_data()
 
     # Rescale the images from [0,255] to the [0.0,1.0] range.
@@ -43,6 +43,7 @@ def get_dataset(digits=[3, 5], n_px=8, train_size=800, test_size=200):
     return (x_train, y_train), (x_test, y_test)
 
 def visualise_data(digits, x, y, pred=None):
+    plt.style.use('default')
     n_img = len(x)
     labels_list = digits
     fig, axes = plt.subplots(1, len(x), figsize=(2*len(x), 2))
