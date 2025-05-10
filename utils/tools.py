@@ -5,10 +5,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import datasets
 from torch.optim import Adam
+from torch.utils.data import DataLoader, TensorDataset
 
 from tqdm import tqdm
 
 import matplotlib.pyplot as plt
+
+from utils.models import PGD
+
 
 def get_dataset(digits=[5, 8], n_px=16, train_size=1000, test_size=200):
     # Load raw data (uint8 [0-255])
@@ -40,16 +44,20 @@ def get_dataset(digits=[5, 8], n_px=16, train_size=1000, test_size=200):
     
     return (x_train, y_train), (x_test, y_test)
 
+
 def visualise_data(x, y, pred=None):
     n_img = len(x)
     fig, axes = plt.subplots(1, n_img, figsize=(2*n_img, 2))
     for i in range(n_img):
         axes[i].imshow(x[i], cmap="gray")
+        axes[i].axis('off')  # Hide axes
         if pred is None:
             axes[i].set_title("Label: {}".format(y[i]))
         else:
             axes[i].set_title("Label: {}, Pred: {}".format(y[i], pred[i]))
+        plt.axis('off')
     plt.tight_layout(w_pad=2)
+
 
 def train_loop(dataloader, model, loss_fn, optimizer, device):
     size = len(dataloader.dataset)
@@ -78,6 +86,7 @@ def train_loop(dataloader, model, loss_fn, optimizer, device):
 
     return avg_loss, accuracy
 
+
 def test_loop(dataloader, model, loss_fn, device):
     # Set the model to evaluation mode - important for batch normalization and dropout layers
     # Unnecessary in this situation but added for best practices
@@ -97,6 +106,7 @@ def test_loop(dataloader, model, loss_fn, device):
     avg_loss = total_loss / total
     accuracy = correct / total
     return avg_loss, accuracy
+
 
 def train_and_plot_accuracy(model, train_loader, test_loader, epochs, lr, device):
     """
@@ -176,15 +186,81 @@ def train_and_plot_accuracy(model, train_loader, test_loader, epochs, lr, device
     plt.tight_layout()
     plt.show()
 
-# Evaluate model on adversarial examples
-def evaluate_under_attack(model, attack_model, base_feats, labels, epsilons, alpha, num_iter):
-    acc_list = []
 
+# Evaluate model on adversarial examples
+def evaluate_under_attack(model, attack_model, base_feats, labels, epsilons, alpha, num_iter, batch_size, device="cpu"):
+    acc_list = []
+    loss_fn = nn.CrossEntropyLoss()
+
+    # Start time tracking
+    start_time = time.time()
     for eps in epsilons:
-        perturb = PGD(model, base_feats, labels, epsilon=eps, alpha=alpha, num_iter=num_iter)
+        perturb = PGD(attack_model, base_feats, labels, epsilon=eps, num_iter=num_iter, device=device)
         x_adv = (base_feats + perturb).clamp(0, 1)  # Clamp to valid pixel range
         adv_loader = DataLoader(TensorDataset(x_adv, labels), batch_size=batch_size)
         _, acc = test_loop(adv_loader, model, loss_fn, device)
         acc_list.append(acc)
 
+    # End time tracking
+    elapsed_time = time.time() - start_time
+    print(f"Attack on {str(type(model).__name__)} completed in {elapsed_time:.2f} seconds.")
+
     return acc_list
+
+def print_model_summary(model):
+    print("=================================================================")
+    print("{:<40} {:>10} {:>10}".format("Layer (type)", "Param #", "Trainable"))
+    print("=================================================================")
+    total_params = 0
+    trainable_params = 0
+    
+    for name, param in model.named_parameters():
+        n_params = param.numel()
+        is_trainable = param.requires_grad
+        total_params += n_params
+        if is_trainable:
+            trainable_params += n_params
+        print("{:<40} {:>10} {:>10}".format(name, n_params, str(is_trainable)))
+    
+    print("=================================================================")
+    print("Total params: {:,}".format(total_params))
+    print("Trainable params: {:,}".format(trainable_params))
+    print("Non-trainable params: {:,}".format(total_params - trainable_params))
+    print("=================================================================")
+
+def plot_acc_vs_eps(epsilons, accs_cnn, accs_neural, accs_qml, filename):
+    """
+    Plots adversarial robustness comparison among CNN, Feedforward NN, and optionally QNN.
+    
+    Parameters:
+    - epsilons: Array-like, epsilon values.
+    - accs_cnn: Array-like, accuracy values for CNN.
+    - accs_neural: Array-like, accuracy values for Feedforward NN.
+    - accs_qml: Array-like, accuracy values for Quantum NN.
+    - filename: Filename to save the plot.
+    """
+    
+    plt.figure(figsize=(8, 5))
+    plt.rcParams.update({'font.family': 'serif', 'font.size': 14})
+
+    # Plotting
+    plt.plot(epsilons, accs_cnn, 'bs-', label='CNN', linewidth=2, markersize=6)
+    plt.plot(epsilons, accs_neural, 'ro-', label='Feedforward NN', linewidth=2, markersize=6)
+    if accs_qml is not None:
+        plt.plot(epsilons, accs_qml, 'g^-', label='QNN (32 layers)', linewidth=2, markersize=6)
+
+    # Labels and title
+    plt.xlabel('Epsilon (ε)', labelpad=10)
+    plt.ylabel('Accuracy', labelpad=10)
+    plt.title('Adversarial Attack Robustness', pad=15)
+    plt.legend(frameon=False, fontsize=12)
+
+    # Formatting
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.xticks(fontsize=12)
+    plt.yticks(fontsize=12)
+    plt.tight_layout()
+
+    # Save plot
+    plt.savefig(filename, dpi=600, bbox_inches='tight', transparent=True)
+    plt.show()
